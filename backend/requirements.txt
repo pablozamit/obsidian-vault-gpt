@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+google-api-python-client
+google-auth-oauthlib
+openai
+# Para embeddings y similitud, podríamos añadir más adelante:
+# scikit-learn (para cosine_similarity si no usamos una lib vectorial)
+# faiss-cpu (o faiss-gpu si hay GPU disponible)
+# tiktoken (para contar tokens para OpenAI)

@@ -43,12 +43,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setInput('');
   };
 
-  const suggestedQueries = [
-    "Dame un plan completo de dieta, ejercicio y suplementación para maximizar mi testosterona",
-    "¿Cuáles son las mejores estrategias de productividad según mis notas?",
-    "Resumir los conceptos clave sobre inversiones y finanzas personales",
-    "¿Qué técnicas de aprendizaje he documentado que funcionan mejor?"
-  ];
+  // const suggestedQueries = [
+  //   "Dame un plan completo de dieta, ejercicio y suplementación para maximizar mi testosterona",
+  //   "¿Cuáles son las mejores estrategias de productividad según mis notas?",
+  //   "Resumir los conceptos clave sobre inversiones y finanzas personales",
+  //   "¿Qué técnicas de aprendizaje he documentado que funcionan mejor?"
+  // ];
+  const suggestedQueries: string[] = []; // Reemplazado con array vacío
+
 
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto">
