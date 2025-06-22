@@ -23,10 +23,11 @@ const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
 
   useEffect(() => {
     // Check if already connected
+    // TODO: Re-evaluate gdrive_connection storage once OAuth is implemented
     const savedConnection = localStorage.getItem('gdrive_connection');
     if (savedConnection) {
       const connection = JSON.parse(savedConnection);
-      setIsConnected(true);
+      setIsConnected(true); // This will likely change based on OAuth token presence/validity
       setFolderPath(connection.folderPath);
     }
   }, []);
@@ -41,27 +42,26 @@ const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isConnected, autoSync, syncInterval]);
+  }, [isConnected, autoSync, syncInterval, handleSync]); // Added handleSync to dependencies
 
   const handleConnect = async () => {
     try {
-      // Simulate Google Drive API connection
-      // In real implementation, this would use Google Drive API
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // TODO: Implementar lógica real de Google Drive API connection (OAuth 2.0)
+      // await new Promise(resolve => setTimeout(resolve, 2000)); // Simulación eliminada
       
-      const connection = {
-        folderPath: folderPath || '/Obsidian Vault',
-        accessToken: 'mock_token',
-        refreshToken: 'mock_refresh_token',
-        connectedAt: new Date().toISOString()
-      };
+      // const connection = {
+      //   folderPath: folderPath || '/Obsidian Vault',
+      //   accessToken: 'mock_token', // Mock token eliminado
+      //   refreshToken: 'mock_refresh_token', // Mock token eliminado
+      //   connectedAt: new Date().toISOString()
+      // };
+      // localStorage.setItem('gdrive_connection', JSON.stringify(connection)); // Se manejará con la lógica real
+      // setIsConnected(true); // Se manejará con la lógica real
+      // setSyncStatus('success'); // Se manejará con la lógica real
       
-      localStorage.setItem('gdrive_connection', JSON.stringify(connection));
-      setIsConnected(true);
-      setSyncStatus('success');
-      
-      // Trigger initial sync
-      setTimeout(() => handleSync(), 1000);
+      console.log("TODO: Implement Google Drive Connection");
+      // Trigger initial sync (esto se moverá a la lógica de conexión exitosa)
+      // setTimeout(() => handleSync(), 1000);
     } catch (error) {
       setSyncStatus('error');
       console.error('Failed to connect to Google Drive:', error);
@@ -69,35 +69,41 @@ const GoogleDriveSync: React.FC<GoogleDriveSyncProps> = ({
   };
 
   const handleDisconnect = () => {
-    localStorage.removeItem('gdrive_connection');
+    // TODO: Implementar desconexión real si es necesario (ej. invalidar token OAuth)
+    localStorage.removeItem('gdrive_connection'); // May remove or change based on OAuth
     setIsConnected(false);
     setSyncStatus('idle');
   };
 
-  const handleSync = async () => {
-    if (!isConnected) return;
+  const handleSync = useCallback(async () => { // Wrapped in useCallback
+    if (!isConnected) {
+      console.log("Cannot sync, not connected to Google Drive.");
+      return;
+    }
     
     setSyncStatus('syncing');
     try {
-      // Simulate fetching files from Google Drive
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // TODO: Implementar obtención real de archivos desde Google Drive API
+      // await new Promise(resolve => setTimeout(resolve, 3000)); // Simulación eliminada
       
-      // Mock file data - in real implementation, this would fetch from Google Drive API
-      const mockFiles = Array.from({ length: Math.floor(Math.random() * 50) + 100 }, (_, i) => ({
-        id: `file_${i}`,
-        name: `Note ${i + 1}.md`,
-        content: `# Note ${i + 1}\n\nThis is a sample note from your Obsidian vault.\n\n## Key Points\n\n- Important concept ${i + 1}\n- Related idea\n- Action item\n\n#productivity #notes #obsidian`,
-        modifiedTime: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-        size: Math.floor(Math.random() * 5000) + 500
-      }));
+      // Mock file data eliminado
+      // const mockFiles = Array.from({ length: Math.floor(Math.random() * 50) + 100 }, (_, i) => ({
+      //   id: `file_${i}`,
+      //   name: `Note ${i + 1}.md`,
+      //   content: `# Note ${i + 1}\n\nThis is a sample note from your Obsidian vault.\n\n## Key Points\n\n- Important concept ${i + 1}\n- Related idea\n- Action item\n\n#productivity #notes #obsidian`,
+      //   modifiedTime: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
+      //   size: Math.floor(Math.random() * 5000) + 500
+      // }));
       
-      onSync(mockFiles);
-      setSyncStatus('success');
+      console.log("TODO: Implement actual file fetching and call onSync with real files");
+      // onSync([]); // Call with empty array for now to avoid breaking 'onSync'
+      setSyncStatus('idle'); // Set to idle or success based on actual outcome later
+                           // For now, idle to prevent UI showing success for a mock.
     } catch (error) {
       setSyncStatus('error');
       console.error('Sync failed:', error);
     }
-  };
+  }, [isConnected, onSync]); // Added dependencies for useCallback
 
   const getStatusIcon = () => {
     switch (syncStatus) {

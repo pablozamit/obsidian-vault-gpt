@@ -27,5 +27,5 @@ export interface KnowledgeStats {
   totalNotes: number;
   totalWords: number;
   uniqueTags: number;
-  lastUpdated: Date;
+  lastUpdated: Date | null; // Modificado para aceptar null
 }
