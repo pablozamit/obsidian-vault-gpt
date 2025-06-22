@@ -8,7 +8,7 @@ export const useKnowledgeBase = () => {
     totalNotes: 0,
     totalWords: 0,
     uniqueTags: 0,
-    lastUpdated: new Date(),
+    lastUpdated: null, // Cambiado de new Date() a null
   });
 
   const parseGoogleDriveFile = useCallback((file: any): Note => {
