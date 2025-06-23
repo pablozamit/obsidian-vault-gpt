@@ -37,24 +37,15 @@ Este proyecto integra tu bóveda de Obsidian con modelos de lenguaje grandes (LL
     *   Navega al directorio `backend/`.
     *   Crea un archivo `.env` basado en `backend/.env.example` (que está en la raíz del proyecto, pero estas variables son para el backend).
     *   Rellena las siguientes variables en tu archivo `.env` (o directamente en tu entorno):
-        *   `GOOGLE_CLIENT_ID`: Tu ID de cliente de Google Cloud para OAuth 2.0.
-        *   `GOOGLE_CLIENT_SECRET`: Tu secreto de cliente de Google Cloud.
-        *   `GOOGLE_REDIRECT_URI`: La URI de redirección configurada en Google Cloud (ej. `http://localhost:3001/api/auth/google/callback` para desarrollo local si el backend corre en el puerto 3001).
-        *   `OBSIDIAN_VAULT_FOLDER_ID`: El ID de la carpeta de Google Drive que contiene tu bóveda de Obsidian.
-        *   `API_BEARER_TOKEN`: Un token secreto fuerte para proteger el endpoint `/api/knowledge-search`.
-        *   `OPENAI_API_KEY`: Tu clave API de OpenAI.
-        *   `FRONTEND_URL`: La URL donde se ejecuta tu frontend (ej. `http://localhost:5173`).
-        *   `BACKEND_PORT`: El puerto en el que correrá el backend (ej. `3001`).
+        
     *   Instala las dependencias: `pip install -r requirements.txt`
     *   Inicializa la base de datos y aplica las migraciones:
-        *   (Desde dentro de `backend/`) `alembic upgrade head`
-        *   Esto creará el archivo `notes.db`.
+
 3.  **Configura el Frontend**:
     *   Navega al directorio raíz del proyecto.
     *   Crea un archivo `.env` basado en `.env.example`.
     *   Rellena las siguientes variables:
-        *   `VITE_BACKEND_API_URL`: La URL completa de tu backend API (ej. `http://localhost:3001/api`).
-        *   `VITE_API_BEARER_TOKEN`: El mismo `API_BEARER_TOKEN` que configuraste para el backend, si el frontend va a usar el endpoint de búsqueda de conocimiento.
+        
     *   Instala las dependencias: `npm install` (o `yarn install`).
 
 ## Ejecución
@@ -80,7 +71,4 @@ Los siguientes archivos se generan y gestionan en el directorio `backend/` y est
 *   `faiss_index.idx`: Índice FAISS para búsqueda semántica.
 *   `faiss_map.json`: Mapeo de IDs internos de FAISS a IDs de notas.
 
-Asegúrate de que el proceso del backend tenga permisos de escritura en el directorio `backend/` para crear y actualizar estos archivos.
 
----
-*Última revisión de funcionalidades principales: 23 de Junio, 2025*
