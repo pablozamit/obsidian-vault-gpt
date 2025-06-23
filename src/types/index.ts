@@ -21,6 +21,7 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   sources?: Note[];
+  isError?: boolean; // Optional: to indicate if the message is an error message
 }
 
 export interface KnowledgeStats {

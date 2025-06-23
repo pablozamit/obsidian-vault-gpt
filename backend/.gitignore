@@ -8,5 +8,14 @@ __pycache__/
 # Archivo de token de OAuth (sensible)
 token.json
 
+# Base de datos SQLite local
+notes.db
+*.db # Más genérico por si hay otros archivos de BD temporales
+*.db-journal # Archivos journal de SQLite
+
+# Índice FAISS y mapa de IDs
+faiss_index.idx
+faiss_map.json
+
 # Archivos .env locales (si se decide tener uno específico para backend además del global)
 .env

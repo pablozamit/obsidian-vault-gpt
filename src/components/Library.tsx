@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react'; // useCallback añadido
 import { BookOpen, Search, Filter, Calendar, FileText, Hash } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Note } from '../types';
 import NoteCard from './NoteCard';
+import NoteDetailModal from './NoteDetailModal'; // Importar el modal
 
 interface LibraryProps {
   notes: Note[];
@@ -11,6 +12,21 @@ interface LibraryProps {
 const Library: React.FC<LibraryProps> = ({ notes }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'modified' | 'created' | 'title' | 'wordCount'>('modified');
+  const [selectedTag, setSelectedTag] = useState<string>('');
+
+  // Estados para el modal
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleOpenModal = useCallback((note: Note) => {
+    setSelectedNote(note);
+    setIsModalOpen(true);
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+    // setSelectedNote(null); // Opcional: limpiar nota al cerrar para liberar memoria si es grande
+  }, []);
   const [selectedTag, setSelectedTag] = useState<string>('');
 
   const allTags = useMemo(() => {
@@ -170,7 +186,7 @@ const Library: React.FC<LibraryProps> = ({ notes }) => {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05, duration: 0.3 }}
                 >
-                  <NoteCard note={note} />
+                  <NoteCard note={note} onCardClick={handleOpenModal} />
                 </motion.div>
               ))}
             </motion.div>
@@ -186,6 +202,12 @@ const Library: React.FC<LibraryProps> = ({ notes }) => {
           </div>
         )}
       </motion.div>
+
+      <NoteDetailModal
+        note={selectedNote}
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+      />
     </div>
   );
 };

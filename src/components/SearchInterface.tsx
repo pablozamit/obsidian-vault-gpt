@@ -1,32 +1,55 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react'; // useCallback añadido
 import { Search, Filter, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { SearchResult } from '../types';
+import { SearchResult, Note } from '../types'; // Note importado
 import NoteCard from './NoteCard';
+import NoteDetailModal from './NoteDetailModal'; // Importar el modal
 
 interface SearchInterfaceProps {
   onSearch: (query: string) => SearchResult[];
   notes: any[];
 }
 
-const SearchInterface: React.FC<SearchInterfaceProps> = ({ onSearch, notes }) => {
+const SearchInterface: React.FC<SearchInterfaceProps> = ({ onSearch, notes: initialNotes }) => {
   const [query, setQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Estados para el modal
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleOpenModal = useCallback((note: Note) => {
+    setSelectedNote(note);
+    setIsModalOpen(true);
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+  }, []);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
-    notes.forEach(note => {
-      note.tags.forEach((tag: string) => tagSet.add(tag));
+    initialNotes.forEach(note => { // Usar initialNotes para los tags
+      (note.tags || []).forEach((tag: string) => tagSet.add(tag));
     });
     return Array.from(tagSet).sort();
-  }, [notes]);
+  }, [initialNotes]);
 
-  const handleSearch = (searchQuery: string) => {
+  const handleSearch = async (searchQuery: string) => {
     setQuery(searchQuery);
     if (searchQuery.trim()) {
-      const searchResults = onSearch(searchQuery);
-      setResults(searchResults);
+      setIsSearching(true);
+      try {
+        const searchResults = await onSearch(searchQuery, 20); // Límite de 20 resultados por ejemplo
+        setResults(searchResults);
+      } catch (error) {
+        console.error("Search failed:", error);
+        setResults([]);
+      } finally {
+        setIsSearching(false);
+      }
     } else {
       setResults([]);
     }
@@ -156,6 +179,7 @@ const SearchInterface: React.FC<SearchInterfaceProps> = ({ onSearch, notes }) =>
                       note={result.note} 
                       searchMatches={result.matches}
                       relevanceScore={result.relevance}
+                      onCardClick={handleOpenModal} // Añadido
                     />
                   </motion.div>
                 ))}
@@ -164,7 +188,7 @@ const SearchInterface: React.FC<SearchInterfaceProps> = ({ onSearch, notes }) =>
           </AnimatePresence>
         </div>
 
-        {!query && notes.length > 0 && (
+        {!query && initialNotes.length > 0 && ( // Usar initialNotes
           <div className="text-center py-12">
             <Search className="h-16 w-16 text-gray-300 mx-auto mb-4" />
             <p className="text-xl text-gray-600 mb-2">Ready to search</p>
@@ -172,6 +196,11 @@ const SearchInterface: React.FC<SearchInterfaceProps> = ({ onSearch, notes }) =>
           </div>
         )}
       </motion.div>
+      <NoteDetailModal
+        note={selectedNote}
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+      />
     </div>
   );
 };
