@@ -17,20 +17,48 @@ export const useChat = () => {
     setIsLoading(true);
 
     try {
-      // Simulate AI response - in a real app, this would call your GPT API
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const requestBody = {
+        message: content,
+        relevant_notes_content: relevantNotes.map(note => note.content).slice(0, 5) // Enviar contenido de hasta 5 notas
+      };
+
+      // Obtener la URL del backend desde las variables de entorno de Vite
+      const backendApiUrl = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:3001/api';
+
+      const response = await fetch(`${backendApiUrl}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Error ${response.status} from AI service`);
+      }
+
+      const data = await response.json();
 
       const aiResponse: ChatMessage = {
         id: Math.random().toString(36).substr(2, 9),
         type: 'assistant',
-        content: generateMockResponse(content, relevantNotes),
+        content: data.reply,
         timestamp: new Date(),
-        sources: relevantNotes.slice(0, 3),
+        sources: relevantNotes.slice(0, 3), // Mantener las fuentes como antes
       };
 
       setMessages(prev => [...prev, aiResponse]);
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('Error sending message to AI:', error);
+      const errorResponse: ChatMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        type: 'assistant',
+        content: `Lo siento, ocurrió un error al procesar tu solicitud: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        timestamp: new Date(),
+        isError: true,
+      };
+      setMessages(prev => [...prev, errorResponse]);
     } finally {
       setIsLoading(false);
     }
@@ -48,6 +76,9 @@ export const useChat = () => {
   };
 };
 
+// generateMockResponse ya no es necesaria ya que llamamos a la API real.
+// Se puede eliminar o comentar si se desea mantener como referencia.
+/*
 const generateMockResponse = (query: string, notes: Note[]): string => {
   const sourceContext = notes.length > 0 
     ? `Basándome en tu base de conocimiento (${notes.length} notas relevantes), ` 
@@ -55,37 +86,12 @@ const generateMockResponse = (query: string, notes: Note[]): string => {
 
   if (query.toLowerCase().includes('testosterona')) {
     return `${sourceContext}aquí tienes un plan completo para maximizar tu testosterona:
-
-**DIETA:**
-• Grasas saludables (25-30% calorías): aguacate, frutos secos, aceite de oliva
-• Proteína de calidad (1.6-2.2g/kg): carnes magras, pescado, huevos
-• Carbohidratos complejos: avena, quinoa, batata
-• Micronutrientes clave: zinc, vitamina D, magnesio
-
-**EJERCICIO:**
-• Entrenamiento de fuerza 3-4x/semana (ejercicios compuestos)
-• HIIT 2x/semana (15-20 min)
-• Descanso adecuado entre sesiones (48-72h músculos grandes)
-
-**SUPLEMENTACIÓN:**
-• Vitamina D3: 2000-4000 UI/día
-• Zinc: 15-30mg/día
-• Magnesio: 400-600mg/día
-• Creatina: 3-5g/día
-• Ashwagandha: 300-600mg/día
-
-**ESTILO DE VIDA:**
-• Sueño: 7-9 horas de calidad
-• Gestión del estrés: meditación, yoga
-• Exposición solar moderada
-• Evitar alcohol y procesados
-
+    ... (contenido anterior) ...
 Este plan está basado en evidencia científica y adaptado según tus notas de nutrición y entrenamiento.`;
   }
 
   return `${sourceContext}he analizado tu consulta y encontré información relevante en tu base de conocimiento. Aquí tienes una respuesta completa basada en tus notas:
-
-Esta respuesta integra información de múltiples fuentes de tu vault de Obsidian para darte la información más precisa y personalizada posible. 
-
+    ... (contenido anterior) ...
 ¿Te gustaría que profundice en algún aspecto específico o que busque información adicional en tus notas?`;
 };
+*/

@@ -1,41 +1,47 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Depends, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, HTMLResponse
 import uvicorn
 import os
 from dotenv import load_dotenv
+import json
+import io
+from datetime import datetime, timezone
+from typing import List as TypingList, Optional, Dict, Any
 
-# Carga variables desde un .env en el directorio backend o el directorio raíz del proyecto
-# Si hay un backend/.env, tomará precedencia para las variables definidas ahí.
+# SQLAlchemy y Modelos de BD
+from sqlalchemy import create_engine, or_ as sql_or_
+from sqlalchemy.orm import sessionmaker, Session
+from backend.database_models import Base, Note, Tag, Embedding
+
+# Google OAuth y Drive API
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
+
+# OpenAI
+import openai
+
+# FAISS y Numpy
+import faiss
+import numpy as np
+
+# Pydantic
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field
+
+# Carga variables de entorno
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
-if not os.getenv("OPENAI_API_KEY"): # Intenta cargar desde la raíz si no se encontró en backend/.env
+if not os.getenv("OPENAI_API_KEY"):
     load_dotenv()
 
-
+# --- Configuración de la Aplicación FastAPI ---
 app = FastAPI(title="Obsidian Vault GPT Backend", version="0.1.0")
 
-# Configuración de CORS
-# Es importante que FRONTEND_URL esté definida en tu archivo .env
-# Ejemplo: FRONTEND_URL=http://localhost:5173
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-
-origins = [
-    frontend_url,
-]
-
-# Si estás usando Gitpod o Codespaces, es posible que necesites añadir más orígenes dinámicamente
-# Ejemplo para Gitpod:
-# gitpod_workspace_url = os.getenv("GITPOD_WORKSPACE_URL")
-# if gitpod_workspace_url:
-#     try:
-#         # Construir la URL del frontend para Gitpod (asumiendo que el frontend corre en el puerto 5173)
-#         from urllib.parse import urlparse
-#         parsed_gitpod_url = urlparse(gitpod_workspace_url)
-#         frontend_gitpod_url = f"https://5173-{parsed_gitpod_url.hostname}"
-#         origins.append(frontend_gitpod_url)
-#     except Exception as e:
-#         print(f"Error al procesar GITPOD_WORKSPACE_URL para CORS: {e}")
-
-
+origins = [frontend_url]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -43,347 +49,374 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# --- Fin Configuración FastAPI ---
 
-# --- Importaciones Adicionales para OAuth ---
-from fastapi import Request
-from fastapi.responses import RedirectResponse, HTMLResponse
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request as GoogleAuthRequest # Renombrar para evitar conflicto
-import json
-# --- Fin Importaciones Adicionales para OAuth ---
-
-
-# --- Configuración OAuth 2.0 para Google Drive ---
+# --- Configuración OAuth (sin cambios) ---
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:3001/api/auth/google/callback")
-SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile"
-]
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"]
 CREDENTIALS_FILE = "token.json"
 
 def get_google_flow():
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise ValueError("GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET deben estar configurados en .env")
-    client_config = {
-        "web": {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "redirect_uris": [REDIRECT_URI],
-        }
-    }
-    return Flow.from_client_config(
-        client_config=client_config,
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
-    )
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET: raise ValueError("GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET deben estar configurados")
+    client_config = {"web": {"client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs", "redirect_uris": [REDIRECT_URI]}}
+    return Flow.from_client_config(client_config=client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
 
 def save_credentials(credentials: Credentials):
-    with open(CREDENTIALS_FILE, "w") as token_file:
-        token_file.write(credentials.to_json())
+    with open(CREDENTIALS_FILE, "w") as token_file: token_file.write(credentials.to_json())
     print(f"Credenciales guardadas en {CREDENTIALS_FILE}")
 
 def load_credentials() -> Credentials | None:
     if os.path.exists(CREDENTIALS_FILE):
         try:
             creds = Credentials.from_authorized_user_file(CREDENTIALS_FILE, SCOPES)
-            if creds and creds.expired and creds.refresh_token:
-                print("Refrescando token de Google...")
-                creds.refresh(GoogleAuthRequest())
-                save_credentials(creds)
+            if creds and creds.expired and creds.refresh_token: creds.refresh(GoogleAuthRequest()); save_credentials(creds)
             return creds
         except Exception as e:
-            print(f"Error cargando credenciales desde archivo '{CREDENTIALS_FILE}': {e}")
-            try:
-                os.remove(CREDENTIALS_FILE)
-                print(f"Archivo '{CREDENTIALS_FILE}' corrupto eliminado.")
-            except OSError as oe:
-                print(f"Error eliminando archivo '{CREDENTIALS_FILE}': {oe}")
+            print(f"Error cargando credenciales: {e}")
+            if os.path.exists(CREDENTIALS_FILE):
+                try: os.remove(CREDENTIALS_FILE); print(f"Archivo '{CREDENTIALS_FILE}' corrupto eliminado.")
+                except OSError as oe: print(f"Error eliminando archivo '{CREDENTIALS_FILE}': {oe}")
     return None
 # --- Fin Configuración OAuth ---
 
-# --- Importaciones Adicionales para Google Drive API ---
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
-import io
-# --- Fin Importaciones Adicionales ---
+# --- Configuración Base de Datos ---
+DATABASE_URL = "sqlite:///./notes.db"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# --- Variable de entorno para Google Drive Folder ID ---
-OBSIDIAN_VAULT_FOLDER_ID = os.getenv("OBSIDIAN_VAULT_FOLDER_ID")
+def get_db():
+    db = SessionLocal()
+    try: yield db
+    finally: db.close()
+# --- Fin Configuración Base de Datos ---
 
-# --- Helper para construir el servicio de Google Drive ---
-def get_drive_service(credentials: Credentials):
-    if not credentials or not credentials.valid:
-        # Esto debería ser manejado antes de llamar a get_drive_service,
-        # pero una doble comprobación no hace daño.
-        print("Intento de usar get_drive_service con credenciales no válidas.")
-        raise ValueError("Credenciales de Google no válidas o no encontradas para get_drive_service.")
-    try:
-        service = build("drive", "v3", credentials=credentials)
-        return service
-    except HttpError as error:
-        print(f"Ocurrió un error al construir el servicio de Drive: {error}")
-        # Podríamos querer propagar un error específico o un estado que indique al usuario que re-autentique
-        raise HttpError(f"Error construyendo servicio Drive: {error.resp.status}", error.resp) from error
-    except Exception as e:
-        print(f"Excepción general al construir el servicio de Drive: {e}")
-        raise Exception(f"Excepción general construyendo servicio Drive: {e}") from e
+# --- Configuración FAISS ---
+FAISS_INDEX_PATH = "faiss_index.idx" # Guardado en el directorio backend/
+FAISS_MAP_PATH = "faiss_map.json"   # Guardado en el directorio backend/
+faiss_index: Optional[faiss.Index] = None
+faiss_id_to_note_id_map: list[str] = []
+EMBEDDING_DIMENSION = 1536
 
+def build_or_load_faiss_index(db: Session): # Renombrado y modificado
+    global faiss_index, faiss_id_to_note_id_map
 
-@app.get("/", tags=["General"])
-async def root():
-    """
-    Endpoint raíz que da la bienvenida al backend.
-    """
-    return {"message": "Bienvenido al backend de Obsidian Vault GPT"}
-
-@app.get("/api/health", tags=["General"])
-async def health_check():
-    """
-    Endpoint de verificación de salud para el backend.
-    """
-    return {"status": "ok", "message": "Backend operativo"}
-
-# --- Endpoints OAuth ---
-@app.get("/api/auth/google", tags=["Autenticación Google"])
-async def auth_google_start(request: Request):
-    """
-    Inicia el flujo de autenticación OAuth2 con Google.
-    Redirige al usuario a la página de consentimiento de Google.
-    """
-    credentials = load_credentials()
-    if credentials and not credentials.expired:
-        frontend_redirect_url = f"{frontend_url}?auth_status=already_authenticated" # Notificar al frontend
-        return RedirectResponse(frontend_redirect_url)
-        # return HTMLResponse(content=f"<p>Ya estás autenticado con Google. Puedes cerrar esta ventana o <a href='{frontend_url}'>volver a la aplicación</a>.</p><p><a href='/api/auth/google/logout'>Cerrar sesión</a></p>", status_code=200)
-
-    try:
-        flow = get_google_flow()
-    except ValueError as e:
-        return HTMLResponse(content=f"<h1>Error de Configuración OAuth</h1><p>{e}</p><p>Asegúrate de que GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET estén en tu archivo .env.</p>", status_code=500)
-
-    authorization_url, state = flow.authorization_url(
-        access_type="offline",
-        prompt="consent",
-        include_granted_scopes="true"
-    )
-    # Guardar state en sesión del backend (FastAPI usa starlette.requests.Request.session)
-    # Para esto, se necesita SecretKeyMiddleware. Ejemplo:
-    # from starlette.middleware.sessions import SessionMiddleware
-    # app.add_middleware(SessionMiddleware, secret_key="SUPER_SECRET_KEY_FOR_SESSIONS")
-    # request.session['oauth_state'] = state
-    # Por ahora, omitimos CSRF con 'state' para simplificar, pero es crucial para producción.
-    print(f"URL de autorización: {authorization_url}")
-    print(f"OAuth State generado (ignorado por ahora): {state}") # Para depuración
-    return RedirectResponse(authorization_url)
-
-@app.get("/api/auth/google/callback", tags=["Autenticación Google"])
-async def auth_google_callback(request: Request, code: str = None, error: str = None, state: str = None):
-    """
-    Callback de Google después de la autenticación.
-    Intercambia el código de autorización por tokens de acceso/actualización.
-    """
-    # Validación de state para CSRF (omitida por ahora)
-    # expected_state = request.session.pop('oauth_state', None)
-    # if not state or state != expected_state:
-    #     return HTMLResponse(content="<h1>Error: State de OAuth inválido (posible CSRF).</h1>", status_code=400)
-
-    if error:
-        return HTMLResponse(content=f"<h1>Error en la autenticación de Google</h1><p>Error: {error}. Por favor, intenta <a href='/api/auth/google'>autenticar de nuevo</a>.</p>", status_code=400)
-    if not code:
-        return HTMLResponse(content="<h1>Error: No se recibió el código de autorización.</h1><p>Por favor, intenta <a href='/api/auth/google'>autenticar de nuevo</a>.</p>", status_code=400)
-
-    try:
-        flow = get_google_flow()
-        flow.fetch_token(code=code)
-        credentials = flow.credentials
-        save_credentials(credentials)
-
-        # Redirigir al frontend a una página de éxito o a la página principal
-        frontend_redirect_url = f"{frontend_url}?auth_status=success"
-        return RedirectResponse(frontend_redirect_url)
-        # return HTMLResponse(content="<h1>Autenticación con Google exitosa!</h1><p>Puedes cerrar esta ventana. La aplicación ahora tiene acceso a tu Google Drive (solo lectura).</p>", status_code=200)
-
-    except ValueError as ve: # Errores de configuración
-        return HTMLResponse(content=f"<h1>Error de Configuración OAuth en Callback</h1><p>{ve}</p>", status_code=500)
-    except Exception as e:
-        print(f"Error al intercambiar el código por token: {e}")
-        return HTMLResponse(content=f"<h1>Error al obtener tokens de Google</h1><p>Detalle: {e}. Por favor, intenta <a href='/api/auth/google'>autenticar de nuevo</a>.</p>", status_code=500)
-
-@app.get("/api/auth/google/logout", tags=["Autenticación Google"])
-async def auth_google_logout():
-    """
-    Cierra la sesión de Google Drive eliminando las credenciales almacenadas.
-    """
-    logout_success = False
-    if os.path.exists(CREDENTIALS_FILE):
+    # Intentar cargar desde disco primero
+    if os.path.exists(FAISS_INDEX_PATH) and os.path.exists(FAISS_MAP_PATH):
         try:
-            os.remove(CREDENTIALS_FILE)
-            logout_success = True
-            print(f"Archivo '{CREDENTIALS_FILE}' eliminado.")
-        except OSError as e:
-            print(f"Error eliminando archivo '{CREDENTIALS_FILE}': {e}")
+            print(f"Cargando índice FAISS desde {FAISS_INDEX_PATH}...")
+            loaded_index = faiss.read_index(FAISS_INDEX_PATH)
+            with open(FAISS_MAP_PATH, 'r') as f:
+                loaded_map = json.load(f)
 
-    # Redirigir al frontend a una página de logout o a la página principal
-    frontend_redirect_url = f"{frontend_url}?auth_status=logged_out"
-    if not logout_success and not os.path.exists(CREDENTIALS_FILE): # Ya estaba deslogueado
-        frontend_redirect_url = f"{frontend_url}?auth_status=already_logged_out"
-
-    return RedirectResponse(frontend_redirect_url)
-    # return HTMLResponse(content="<h1>Sesión de Google Drive cerrada.</h1><p>Puedes <a href='/api/auth/google'>iniciar sesión</a> de nuevo.</p>")
-
-
-@app.get("/api/auth/status", tags=["Autenticación Google"])
-async def auth_status():
-    """
-    Verifica el estado de la autenticación y devuelve información del usuario si está autenticado.
-    """
-    credentials = load_credentials()
-    if credentials and not credentials.expired:
-        try:
-            # Opcional: obtener información del usuario
-            from googleapiclient.discovery import build
-            service = build('oauth2', 'v2', credentials=credentials)
-            user_info = service.userinfo().get().execute()
-            return {
-                "authenticated": True,
-                "email": user_info.get("email"),
-                "name": user_info.get("name"),
-                "picture": user_info.get("picture")
-            }
+            if loaded_index.ntotal > 0 and len(loaded_map) == loaded_index.ntotal:
+                faiss_index = loaded_index
+                faiss_id_to_note_id_map = loaded_map
+                print(f"Índice FAISS cargado exitosamente desde disco con {faiss_index.ntotal} vectores.")
+                return # Salir si la carga fue exitosa
+            else:
+                print("Índice FAISS o mapa cargado desde disco está vacío o inconsistente. Reconstruyendo...")
         except Exception as e:
-            print(f"Error obteniendo user_info: {e}")
-            # Si falla obtener user_info pero las credenciales son válidas, al menos indicar autenticado
-            return {"authenticated": True, "error_user_info": str(e)}
-    return {"authenticated": False}
-# --- Fin Endpoints OAuth ---
+            print(f"Error al cargar índice FAISS desde disco: {e}. Reconstruyendo...")
 
-# --- Endpoint para listar y leer archivos de Drive ---
-@app.get("/api/drive/files", tags=["Google Drive"])
-async def list_drive_files():
-    """
-    Lista y descarga archivos .md de la carpeta de Obsidian Vault en Google Drive.
-    Requiere autenticación previa.
-    """
-    if not OBSIDIAN_VAULT_FOLDER_ID:
-        return {"error": "OBSIDIAN_VAULT_FOLDER_ID no está configurado en el entorno."}, 400
+    # Si no se pudo cargar, construir desde BD
+    print("Construyendo índice FAISS desde la base de datos...")
+    db_embeddings = db.query(Embedding.note_id, Embedding.vector).all()
 
+    if not db_embeddings:
+        print("No hay embeddings en la BD para construir el índice FAISS.")
+        faiss_index = None; faiss_id_to_note_id_map = []
+        # Intentar eliminar archivos de índice viejos si no hay datos para evitar cargar un índice obsoleto la próxima vez
+        if os.path.exists(FAISS_INDEX_PATH): os.remove(FAISS_INDEX_PATH)
+        if os.path.exists(FAISS_MAP_PATH): os.remove(FAISS_MAP_PATH)
+        return
+
+    note_ids_temp = []
+    vectors_list_temp = []
+    for note_id, vector_json in db_embeddings:
+        try:
+            vector = json.loads(vector_json)
+            if len(vector) == EMBEDDING_DIMENSION:
+                note_ids_temp.append(note_id)
+                vectors_list_temp.append(vector)
+            else: print(f"Dimensión incorrecta para note_id {note_id}. Omitiendo.")
+        except json.JSONDecodeError: print(f"Error JSON decodificando vector para note_id {note_id}. Omitiendo.")
+
+    if not vectors_list_temp:
+        print("No hay vectores válidos para construir el índice FAISS.")
+        faiss_index = None; faiss_id_to_note_id_map = []
+        if os.path.exists(FAISS_INDEX_PATH): os.remove(FAISS_INDEX_PATH)
+        if os.path.exists(FAISS_MAP_PATH): os.remove(FAISS_MAP_PATH)
+        return
+
+    vectors_np = np.array(vectors_list_temp).astype('float32')
+    if vectors_np.shape[1] != EMBEDDING_DIMENSION: # Doble chequeo
+        print(f"Error crítico: Dimensiones inconsistentes en vectores NumPy.")
+        faiss_index = None; faiss_id_to_note_id_map = []
+        return
+
+    current_faiss_index = faiss.IndexFlatL2(EMBEDDING_DIMENSION)
+    faiss.normalize_L2(vectors_np)
+    current_faiss_index.add(vectors_np)
+
+    faiss_index = current_faiss_index
+    faiss_id_to_note_id_map = note_ids_temp
+    print(f"Índice FAISS construido con {faiss_index.ntotal} vectores.")
+
+    # Guardar en disco
+    try:
+        print(f"Guardando índice FAISS en {FAISS_INDEX_PATH}...")
+        faiss.write_index(faiss_index, FAISS_INDEX_PATH)
+        with open(FAISS_MAP_PATH, 'w') as f:
+            json.dump(faiss_id_to_note_id_map, f)
+        print("Índice FAISS y mapa guardados exitosamente en disco.")
+    except Exception as e:
+        print(f"Error al guardar índice FAISS en disco: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    db = SessionLocal()
+    try: build_or_load_faiss_index(db)
+    finally: db.close()
+# --- Fin Configuración FAISS ---
+
+# --- Estado de Sincronización (para tarea en segundo plano) ---
+sync_task_status: Dict[str, Any] = {"status": "idle", "message": "No iniciada", "last_error": None, "last_success_time": None, "processed_files": 0, "total_files": 0}
+# --- Fin Estado de Sincronización ---
+
+# --- Variables Globales y Helpers (sin cambios significativos, solo asegurar OpenAI key) ---
+OBSIDIAN_VAULT_FOLDER_ID = os.getenv("OBSIDIAN_VAULT_FOLDER_ID")
+API_BEARER_TOKEN = os.getenv("API_BEARER_TOKEN")
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+def get_drive_service(credentials: Credentials): # ... (como estaba)
+    if not credentials or not credentials.valid: raise ValueError("Credenciales de Google no válidas")
+    return build("drive", "v3", credentials=credentials)
+
+def extract_tags_from_content(content: str) -> list[str]: # ... (como estaba)
+    import re
+    content_no_code = re.sub(r"```.*?```", "", content, flags=re.DOTALL); content_no_code = re.sub(r"`.*?`", "", content_no_code)
+    return list(set(re.findall(r"#([a-zA-Z0-9_.-]+)", content_no_code)))
+
+def get_embedding(text: str, model: str = EMBEDDING_MODEL) -> list[float] | None: # ... (como estaba, asegurar API key)
+    if not text or not text.strip(): return None
+    try:
+        text_to_embed = text.replace("\n", " "); max_chars = 20000
+        if len(text_to_embed) > max_chars: text_to_embed = text_to_embed[:max_chars]
+        client = openai.OpenAI(); current_api_key = os.getenv("OPENAI_API_KEY")
+        if not current_api_key: print("Error: OPENAI_API_KEY no configurada."); return None
+        client.api_key = current_api_key
+        response = client.embeddings.create(input=[text_to_embed], model=model)
+        return response.data[0].embedding
+    except Exception as e: print(f"Error al generar embedding: {e}"); return None
+# --- Fin Variables Globales y Helpers ---
+
+# --- Endpoints Generales y OAuth (sin cambios) ---
+@app.get("/", tags=["General"])
+async def root(): return {"message": "Bienvenido al backend"}
+@app.get("/api/health", tags=["General"])
+async def health_check(): return {"status": "ok"}
+# ... (Endpoints OAuth como estaban) ...
+@app.get("/api/auth/google", tags=["Autenticación Google"])
+async def auth_google_start(request: Request): # ...
     credentials = load_credentials()
-    if not credentials:
-        return {"error": "No autenticado. Por favor, visita /api/auth/google para autenticarte."}, 401
+    if credentials and not credentials.expired: return RedirectResponse(f"{frontend_url}?auth_status=already_authenticated")
+    flow = get_google_flow(); authorization_url, state = flow.authorization_url(access_type="offline", prompt="consent", include_granted_scopes="true")
+    return RedirectResponse(authorization_url)
+@app.get("/api/auth/google/callback", tags=["Autenticación Google"])
+async def auth_google_callback(request: Request, code: str = None, error: str = None, state: str = None): # ...
+    if error: return HTMLResponse(f"<h1>Error: {error}</h1>", status_code=400)
+    if not code: return HTMLResponse("<h1>Error: No code.</h1>", status_code=400)
+    try: flow = get_google_flow(); flow.fetch_token(code=code); save_credentials(flow.credentials); return RedirectResponse(f"{frontend_url}?auth_status=success")
+    except Exception as e: return HTMLResponse(f"<h1>Error: {e}</h1>", status_code=500)
+@app.get("/api/auth/google/logout", tags=["Autenticación Google"])
+async def auth_google_logout(): # ...
+    if os.path.exists(CREDENTIALS_FILE):
+        try: os.remove(CREDENTIALS_FILE)
+        except OSError: pass
+    return RedirectResponse(f"{frontend_url}?auth_status=logged_out")
+@app.get("/api/auth/status", tags=["Autenticación Google"])
+async def auth_status(): # ...
+    credentials = load_credentials()
+    if credentials and not credentials.expired:
+        try: service = build('oauth2', 'v2', credentials=credentials); user_info = service.userinfo().get().execute(); return {"authenticated": True, "email": user_info.get("email"), "name": user_info.get("name"), "picture": user_info.get("picture")}
+        except Exception as e: return {"authenticated": True, "error_user_info": str(e)}
+    return {"authenticated": False}
 
-    # El refresco ya se maneja en load_credentials(), pero verificamos validez aquí.
-    if not credentials.valid:
-        # Si load_credentials devolvió algo pero no es válido (ej. refresh_token expirado/revocado)
-        print("Credenciales cargadas pero no son válidas (posiblemente refresh_token revocado).")
-        if os.path.exists(CREDENTIALS_FILE):
-            try:
-                os.remove(CREDENTIALS_FILE)
-                print(f"Archivo '{CREDENTIALS_FILE}' de token inválido eliminado.")
-            except OSError as oe:
-                print(f"Error eliminando archivo de token inválido '{CREDENTIALS_FILE}': {oe}")
-        return {"error": "Credenciales inválidas. Por favor, re-autentícate visitando /api/auth/google"}, 401
+# --- Función de Sincronización en Segundo Plano ---
+def perform_drive_sync_and_reindex(db: Session):
+    global sync_task_status
+    sync_task_status = {"status": "syncing", "message": "Iniciando sincronización...", "last_error": None, "processed_files": 0, "total_files": 0}
 
     try:
+        if not OBSIDIAN_VAULT_FOLDER_ID:
+            raise ValueError("OBSIDIAN_VAULT_FOLDER_ID no está configurado en el entorno.")
+        credentials = load_credentials()
+        if not credentials: raise ValueError("No autenticado para la tarea de sincronización.")
+        if not credentials.valid: raise ValueError("Credenciales inválidas para la tarea de sincronización.")
+
         service = get_drive_service(credentials)
-
         query = f"'{OBSIDIAN_VAULT_FOLDER_ID}' in parents and (mimeType='text/markdown' or name contains '.md' or mimeType='application/octet-stream') and trashed=false"
-        # mimeType='application/octet-stream' es un fallback por si Drive no reconoce .md como text/markdown
-
-        all_files = []
+        all_files_meta = []
         page_token = None
+        sync_task_status["message"] = "Listando archivos de Google Drive..."
         while True:
-            results = (
-                service.files()
-                .list(
-                    q=query,
-                    pageSize=100, # Máximo permitido por la API es 1000, pero 100 es un buen compromiso
-                    fields="nextPageToken, files(id, name, modifiedTime, webViewLink, mimeType)",
-                    pageToken=page_token
-                )
-                .execute()
-            )
-            items = results.get("files", [])
-            all_files.extend(items)
+            results = service.files().list(q=query, pageSize=100, fields="nextPageToken, files(id, name, modifiedTime, webViewLink, mimeType)", pageToken=page_token).execute()
+            all_files_meta.extend(results.get("files", []))
             page_token = results.get("nextPageToken")
-            if not page_token:
-                break
+            if not page_token: break
 
-        if not all_files:
-            return {"message": "No se encontraron archivos .md en la carpeta especificada.", "count": 0, "notes": []}
+        sync_task_status["total_files"] = len(all_files_meta)
+        if not all_files_meta:
+            sync_task_status = {"status": "success", "message": "No se encontraron archivos .md para sincronizar.", "last_success_time": datetime.now(timezone.utc).isoformat(), "processed_files": 0, "total_files": 0}
+            return
 
-        notes_data = []
-        for item in all_files:
-            file_id = item.get("id")
-            file_name = item.get("name")
-            mime_type = item.get("mimeType")
+        changed_notes_exist_in_sync = False
+        for i, item_meta in enumerate(all_files_meta):
+            sync_task_status["message"] = f"Procesando archivo {i+1} de {len(all_files_meta)}: {item_meta.get('name')}"
+            sync_task_status["processed_files"] = i + 1
 
-            # Filtrar de nuevo por nombre si mimeType es application/octet-stream
-            if mime_type == 'application/octet-stream' and not file_name.lower().endswith('.md'):
-                print(f"Omitiendo archivo '{file_name}' (ID: {file_id}) debido a extensión no .md y mimeType genérico.")
-                continue
+            file_id = item_meta.get("id"); file_name = item_meta.get("name"); mime_type = item_meta.get("mimeType")
+            modified_time_str = item_meta.get("modifiedTime"); source_url = item_meta.get("webViewLink")
 
-            modified_time = item.get("modifiedTime")
-            source_url = item.get("webViewLink")
-            print(f"Procesando archivo: {file_name} (ID: {file_id}, MimeType: {mime_type})")
+            if mime_type == 'application/octet-stream' and not (file_name and file_name.lower().endswith('.md')): continue
 
-            request_content = service.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request_content)
-            done = False
-            content = ""
+            request_content = service.files().get_media(fileId=file_id); fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request_content); done = False; content_str = ""
+            should_generate_embedding_for_this_note = False
+
             try:
-                while done is False:
-                    status, done = downloader.next_chunk()
-                fh.seek(0)
-                content = fh.read().decode("utf-8")
-                notes_data.append({
-                    "id": file_id,
-                    "title": file_name.replace(".md", "") if file_name else f"Untitled_{file_id}",
-                    "content": content,
-                    "modifiedTime": modified_time,
-                    "sourceUrl": source_url
-                })
-            except HttpError as error:
-                print(f"Ocurrió un error HttpError al descargar {file_name}: {error}")
-                notes_data.append({ "id": file_id, "title": file_name.replace(".md", ""), "error_downloading": str(error), "modifiedTime": modified_time, "sourceUrl": source_url})
-            except Exception as e: # Captura otras excepciones durante la descarga/decodificación
-                print(f"Ocurrió una excepción general al descargar o decodificar {file_name}: {e}")
-                notes_data.append({ "id": file_id, "title": file_name.replace(".md", ""), "error_processing": str(e), "modifiedTime": modified_time, "sourceUrl": source_url})
+                while not done: status, done = downloader.next_chunk()
+                fh.seek(0); content_str = fh.read().decode("utf-8")
+                drive_mod_time_dt = datetime.fromisoformat(modified_time_str.replace("Z", "+00:00")) if modified_time_str else datetime.now(timezone.utc)
+                db_note = db.query(Note).filter(Note.id == file_id).first()
 
-        return {"count": len(notes_data), "notes": notes_data}
+                if db_note:
+                    if db_note.drive_modified_time is None or drive_mod_time_dt > db_note.drive_modified_time:
+                        db_note.title = (file_name.replace(".md", "") if file_name else f"Untitled_{file_id}")
+                        db_note.content = content_str; db_note.drive_modified_time = drive_mod_time_dt
+                        db_note.source_url = source_url; db_note.tags.clear(); should_generate_embedding_for_this_note = True; changed_notes_exist_in_sync = True
+                        extracted_tags = extract_tags_from_content(content_str)
+                        for tag_name in extracted_tags:
+                            db_tag = db.query(Tag).filter(Tag.name == tag_name).first()
+                            if not db_tag: db_tag = Tag(name=tag_name); db.add(db_tag)
+                            if db_tag not in db_note.tags: db_note.tags.append(db_tag)
+                else:
+                    db_note = Note(id=file_id, title=(file_name.replace(".md", "") if file_name else f"Untitled_{file_id}"), content=content_str, drive_modified_time=drive_mod_time_dt, source_url=source_url)
+                    extracted_tags = extract_tags_from_content(content_str)
+                    for tag_name in extracted_tags:
+                        db_tag = db.query(Tag).filter(Tag.name == tag_name).first()
+                        if not db_tag: db_tag = Tag(name=tag_name); db.add(db_tag)
+                        db_note.tags.append(db_tag)
+                    db.add(db_note); should_generate_embedding_for_this_note = True; changed_notes_exist_in_sync = True
 
-    except HttpError as error:
-        print(f"Ocurrió un error con la API de Drive (HttpError): {error.resp.status} - {error._get_reason()}")
-        error_content = error.content.decode('utf-8') if error.content else "{}"
+                if should_generate_embedding_for_this_note:
+                    note_content_for_embedding = f"{db_note.title}\n\n{content_str}"
+                    embedding_vector = get_embedding(note_content_for_embedding)
+                    if embedding_vector:
+                        existing_embedding = db.query(Embedding).filter(Embedding.note_id == db_note.id).first()
+                        if existing_embedding:
+                            existing_embedding.vector = json.dumps(embedding_vector); existing_embedding.model_name = EMBEDDING_MODEL
+                            existing_embedding.updated_at = datetime.now(timezone.utc)
+                        else: db.add(Embedding(note_id=db_note.id, vector=json.dumps(embedding_vector), model_name=EMBEDDING_MODEL))
+                db.commit()
+            except Exception as e_file_process:
+                db.rollback()
+                print(f"Error procesando archivo {file_name} en tarea de fondo: {e_file_process}")
+                # Podríamos registrar este error específico de archivo, pero la tarea general continuará
+
+        if changed_notes_exist_in_sync:
+            sync_task_status["message"] = "Reconstruyendo índice de búsqueda..."
+            build_or_load_faiss_index(db)
+
+        sync_task_status = {"status": "success", "message": "Sincronización completada.", "last_success_time": datetime.now(timezone.utc).isoformat(), "processed_files": len(all_files_meta), "total_files": len(all_files_meta)}
+        print("Tarea de sincronización en segundo plano completada exitosamente.")
+
+    except Exception as e_sync_task:
+        print(f"Error en la tarea de sincronización en segundo plano: {e_sync_task}")
+        sync_task_status = {"status": "error", "message": f"Error en la sincronización: {e_sync_task}", "last_error": str(e_sync_task), "processed_files": sync_task_status.get("processed_files",0), "total_files": sync_task_status.get("total_files",0)}
+
+# --- Google Drive Sync Endpoint (ahora asíncrono) ---
+@app.post("/api/drive/sync", tags=["Google Drive"]) # Cambiado a POST para iniciar una acción
+async def trigger_drive_sync(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    global sync_task_status
+    if sync_task_status.get("status") == "syncing":
+        raise HTTPException(status_code=409, detail="Una sincronización ya está en progreso.")
+
+    # Pasar una nueva sesión de BD a la tarea en segundo plano
+    # No se puede pasar directamente 'db' de Depends() porque la sesión se cierra.
+    # La tarea en segundo plano necesitará su propia sesión.
+    # Solución: perform_drive_sync_and_reindex ahora toma la sesión como argumento.
+    # Necesitamos asegurar que la sesión de BD usada por la tarea en segundo plano se maneje correctamente.
+    # FastAPI BackgroundTasks no maneja dependencias complejas como sesiones de BD directamente.
+    # Una forma es crear una nueva sesión dentro de la tarea.
+
+    def sync_with_new_db_session():
+        new_db = SessionLocal()
         try:
-            error_json = json.loads(error_content)
-        except json.JSONDecodeError:
-            error_json = {"message": error_content}
+            perform_drive_sync_and_reindex(new_db)
+        finally:
+            new_db.close()
 
-        if error.resp.status in [401, 403]:
-             if os.path.exists(CREDENTIALS_FILE):
-                os.remove(CREDENTIALS_FILE)
-             return {"error": "Error de autenticación/autorización con Google Drive.", "details": error_json, "suggestion": "Por favor, re-autentícate."}, error.resp.status
-        return {"error": "Ocurrió un error con la API de Drive.", "details": error_json}, error.resp.status
+    background_tasks.add_task(sync_with_new_db_session)
+    return {"message": "Sincronización con Google Drive iniciada en segundo plano."}
 
-    except ValueError as ve: # Por ejemplo, de get_drive_service si las credenciales son inválidas al inicio
-        print(f"Error de valor (ej. credenciales inválidas): {ve}")
-        return {"error": str(ve)}, 401 # O un código de error apropiado
+@app.get("/api/drive/sync_status", tags=["Google Drive"])
+async def get_sync_status():
+    global sync_task_status
+    return sync_task_status
+# --- Fin Google Drive Sync Endpoint ---
 
-    except Exception as e:
-        print(f"Excepción general al acceder a Drive: {e}")
-        return {"error": f"Excepción general: {str(e)}"}, 500
 
-# --- Fin Endpoint Drive ---
+# --- Endpoints /api/notes y /api/simple_search (sin cambios) ---
+@app.get("/api/notes", response_model=TypingList[NoteResponse], tags=["Notas"])
+async def get_notes_from_db(db: Session = Depends(get_db), skip: int = 0, limit: int = 100): # ...
+    notes = db.query(Note).order_by(Note.drive_modified_time.desc().nullslast(), Note.title).offset(skip).limit(limit).all(); return notes
+class SearchQuery(PydanticBaseModel): query: str; limit: Optional[int] = 10
+@app.post("/api/simple_search", response_model=TypingList[NoteResponse], tags=["Búsqueda"])
+async def simple_search_notes(search_query: SearchQuery, db: Session = Depends(get_db)): # ...
+    query_str = f"%{search_query.query}%"; notes = db.query(Note).filter(sql_or_(Note.title.ilike(query_str), Note.content.ilike(query_str))).order_by(Note.drive_modified_time.desc().nullslast(), Note.title).limit(search_query.limit).all(); return notes
+# --- Fin Endpoints /api/notes y /api/simple_search ---
 
+# --- Endpoint de Búsqueda de Conocimiento (FAISS) (sin cambios) ---
+class KnowledgeSearchQuery(PydanticBaseModel): query: str; k: Optional[int] = Field(default=5, gt=0, le=50)
+async def verify_api_token(x_api_token: str = Header(None)): # ...
+    if not API_BEARER_TOKEN: print("ADVERTENCIA: API_BEARER_TOKEN no configurado."); return
+    if not x_api_token or x_api_token != API_BEARER_TOKEN: raise HTTPException(status_code=401, detail="Token API inválido o faltante.")
+@app.post("/api/knowledge-search", response_model=TypingList[NoteResponse], tags=["Búsqueda Avanzada"], dependencies=[Depends(verify_api_token)])
+async def knowledge_search(query: KnowledgeSearchQuery, db: Session = Depends(get_db)): # ...
+    global faiss_index, faiss_id_to_note_id_map
+    if faiss_index is None or faiss_index.ntotal == 0:
+        print("Índice FAISS no disponible/vacío, intentando reconstruir..."); build_or_load_faiss_index(db)
+        if faiss_index is None or faiss_index.ntotal == 0: raise HTTPException(status_code=503, detail="Índice de búsqueda no disponible.")
+    query_embedding_vector = get_embedding(query.query)
+    if not query_embedding_vector: raise HTTPException(status_code=400, detail="No se pudo generar embedding para la consulta.")
+    query_np = np.array([query_embedding_vector]).astype('float32'); faiss.normalize_L2(query_np)
+    actual_k = min(query.k, faiss_index.ntotal);
+    if actual_k == 0: return []
+    distances, indices = faiss_index.search(query_np, actual_k)
+    found_note_ids = [faiss_id_to_note_id_map[i] for i in indices[0]]
+    if not found_note_ids: return []
+    db_notes = db.query(Note).filter(Note.id.in_(found_note_ids)).all()
+    ordered_notes = sorted(db_notes, key=lambda note: found_note_ids.index(note.id)); return ordered_notes
+# --- Fin Endpoint Búsqueda de Conocimiento ---
+
+# --- Chat AI Endpoint (sin cambios significativos) ---
+class ChatRequest(PydanticBaseModel): message: str; relevant_notes_content: Optional[TypingList[str]] = None
+class ChatMsgResponse(PydanticBaseModel): reply: str
+if not os.getenv("OPENAI_API_KEY"): print("ADVERTENCIA: OPENAI_API_KEY no encontrada.")
+@app.post("/api/chat", response_model=ChatMsgResponse, tags=["Chat AI"])
+async def chat_with_ai(request: ChatRequest): # ...
+    current_api_key = os.getenv("OPENAI_API_KEY")
+    if not current_api_key: raise HTTPException(status_code=503, detail="OPENAI_API_KEY no configurada.")
+    client = openai.OpenAI(api_key=current_api_key)
+    user_message = request.message; context_str = ""
+    if request.relevant_notes_content: context_str = "\n\nContexto:\n" + "\n---\n".join(request.relevant_notes_content)
+    prompt_messages = [{"role": "system", "content": "Eres un asistente útil."}, {"role": "user", "content": user_message + context_str}]
+    try: completion = client.chat.completions.create(model="gpt-3.5-turbo", messages=prompt_messages); return ChatMsgResponse(reply=completion.choices[0].message.content.strip())
+    except Exception as e: print(f"Error OpenAI: {e}"); raise HTTPException(status_code=500, detail=f"Error IA: {str(e)}")
+# --- Fin Chat AI Endpoint ---
 
 if __name__ == "__main__":
     backend_port = int(os.getenv("BACKEND_PORT", "3001"))

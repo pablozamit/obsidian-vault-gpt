@@ -7,6 +7,7 @@ import ChatInterface from './components/ChatInterface';
 import Library from './components/Library';
 import Analytics from './components/Analytics';
 import CustomGPTDocs from './components/CustomGPTDocs';
+import SettingsView from './components/SettingsView'; // Importar SettingsView
 import { useKnowledgeBase } from './hooks/useKnowledgeBase';
 import { useChat } from './hooks/useChat';
 
@@ -35,14 +36,7 @@ function App() {
       case 'custom-gpt':
         return <CustomGPTDocs />;
       case 'settings':
-        return (
-          <div className="max-w-4xl mx-auto p-6">
-            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Settings</h2>
-              <p className="text-gray-600">Configuration options coming soon...</p>
-            </div>
-          </div>
-        );
+        return <SettingsView />; // Renderizar SettingsView
       case 'chat':
       default:
         return (

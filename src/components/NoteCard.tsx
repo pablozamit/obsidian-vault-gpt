@@ -7,9 +7,10 @@ interface NoteCardProps {
   note: Note;
   searchMatches?: string[];
   relevanceScore?: number;
+  onCardClick?: (note: Note) => void; // Nueva prop
 }
 
-const NoteCard: React.FC<NoteCardProps> = ({ note, searchMatches, relevanceScore }) => {
+const NoteCard: React.FC<NoteCardProps> = ({ note, searchMatches, relevanceScore, onCardClick }) => {
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('es-ES', {
       year: 'numeric',
@@ -36,8 +37,9 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, searchMatches, relevanceScore
 
   return (
     <motion.div
-      whileHover={{ y: -2, shadow: '0 10px 25px rgba(0,0,0,0.1)' }}
-      className="bg-white rounded-xl border border-gray-200 p-6 hover:border-primary-200 transition-all duration-200 shadow-sm hover:shadow-md"
+      whileHover={{ y: -2, boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }} // Corregido boxShadow
+      className={`bg-white rounded-xl border border-gray-200 p-6 hover:border-primary-200 transition-all duration-200 shadow-sm hover:shadow-md ${onCardClick ? 'cursor-pointer' : ''}`}
+      onClick={() => onCardClick?.(note)} // Llamar a onCardClick si existe
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center space-x-3">

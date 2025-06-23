@@ -7,21 +7,22 @@ import { ChatMessage, Note } from '../types';
 
 interface ChatInterfaceProps {
   messages: ChatMessage[];
-  isLoading: boolean;
+  isLoading: boolean; // Este isLoading es para la respuesta del LLM
   onSendMessage: (message: string, relevantNotes?: Note[]) => void;
   onClearChat: () => void;
-  onSearch: (query: string) => { note: Note }[];
+  onSearch: (query: string, limit?: number) => Promise<SearchResult[]>; // Actualizado
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
   messages,
-  isLoading,
+  isLoading, // isLoading para el LLM
   onSendMessage,
   onClearChat,
   onSearch,
 }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isContextSearching, setIsContextSearching] = useState(false); // Nuevo estado para búsqueda de contexto
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -31,13 +32,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => { // Convertido a async
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || isContextSearching) return;
 
-    // Search for relevant notes
-    const searchResults = onSearch(input);
-    const relevantNotes = searchResults.slice(0, 5).map(result => result.note);
+    setIsContextSearching(true); // Iniciar búsqueda de contexto
+    let relevantNotes: Note[] = [];
+    try {
+      // Search for relevant notes
+      const searchResults = await onSearch(input, 5); // Límite de 5 notas para contexto
+      relevantNotes = searchResults.map(result => result.note);
+    } catch (error) {
+      console.error("Error fetching context notes for chat:", error);
+      // Continuar sin notas de contexto si la búsqueda falla
+    } finally {
+      setIsContextSearching(false); // Finalizar búsqueda de contexto
+    }
 
     onSendMessage(input, relevantNotes);
     setInput('');
