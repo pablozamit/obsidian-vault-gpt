@@ -1,0 +1,12 @@
+# Entorno virtual
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivo de token de OAuth (sensible)
+token.json
+
+# Archivos .env locales (si se decide tener uno específico para backend además del global)
+.env

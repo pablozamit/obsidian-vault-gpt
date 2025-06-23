@@ -51,15 +51,15 @@ const Analytics: React.FC<AnalyticsProps> = ({ notes, stats }) => {
       icon: FileText,
       color: 'text-primary-600',
       bgColor: 'bg-primary-50',
-      change: '+12% this month'
+      change: '' // Antes: '+12% this month'
     },
     {
       title: 'Total Words',
       value: stats.totalWords.toLocaleString(),
-      icon: Hash,
+      icon: FileText, // Cambiado de Hash a FileText por más semántica
       color: 'text-secondary-600',
       bgColor: 'bg-secondary-50',
-      change: `${avgWordsPerNote} avg per note`
+      change: notes.length > 0 ? `${avgWordsPerNote} avg per note` : ''
     },
     {
       title: 'Unique Tags',
@@ -67,15 +67,15 @@ const Analytics: React.FC<AnalyticsProps> = ({ notes, stats }) => {
       icon: Hash,
       color: 'text-accent-600',
       bgColor: 'bg-accent-50',
-      change: 'Across all notes'
+      change: '' // Antes: 'Across all notes'
     },
     {
       title: 'Last Updated',
-      value: stats.lastUpdated.toLocaleDateString(),
+      value: stats.lastUpdated ? stats.lastUpdated.toLocaleDateString() : 'N/A', // Manejar posible undefined/null
       icon: Clock,
       color: 'text-green-600',
       bgColor: 'bg-green-50',
-      change: 'Knowledge base'
+      change: '' // Antes: 'Knowledge base'
     }
   ];
 
