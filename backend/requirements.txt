@@ -4,7 +4,10 @@ python-dotenv
 google-api-python-client
 google-auth-oauthlib
 openai
+sqlalchemy
+alembic
+# psycopg2-binary # O el driver de tu DB si no es SQLite, ej. psycopg2-binary para PostgreSQL. SQLite no necesita driver externo.
+tiktoken # Para contar tokens para OpenAI
+faiss-cpu # Para búsqueda vectorial de embeddings
 # Para embeddings y similitud, podríamos añadir más adelante:
 # scikit-learn (para cosine_similarity si no usamos una lib vectorial)
-# faiss-cpu (o faiss-gpu si hay GPU disponible)
-# tiktoken (para contar tokens para OpenAI)
